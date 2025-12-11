@@ -3,57 +3,58 @@
 // Function to save current pinned tabs
 function savePinnedTabs() {
   chrome.tabs.query({ pinned: true }, (tabs) => {
-    const pinnedTabs = tabs.map(tab => tab.url);
+    // Deduplicate URLs using Set
+    const pinnedTabs = [...new Set(tabs.map(tab => tab.url))];
     chrome.storage.local.set({ pinnedTabs }, () => {
-      console.log('Pinned tabs saved:', pinnedTabs);
+      console.log('Pinned tabs saved (unique):', pinnedTabs);
     });
   });
 }
 
-// Function to restore pinned tabs on startup
-function restorePinnedTabs() {
+// Function to restore pinned tabs
+// windowId: optional, if provided, restores to that specific window
+function restorePinnedTabs(windowId) {
   chrome.storage.local.get(['pinnedTabs'], (result) => {
     const savedUrls = result.pinnedTabs;
     if (savedUrls && savedUrls.length > 0) {
-      // Get current tabs to avoid duplicates if Chrome already restored them
-      chrome.tabs.query({ pinned: true }, (currentPinnedTabs) => {
-        const currentUrls = currentPinnedTabs.map(t => t.url);
-
+      if (windowId) {
+        // Restore to specific window
         savedUrls.forEach(url => {
-          // Simple check to avoid restoring if it's already there
-          // Note: exact URL match might miss some dynamic parameters but good for now
-          if (!currentUrls.includes(url)) {
-            chrome.tabs.create({ url: url, pinned: true, active: false });
-          }
+          chrome.tabs.create({ windowId: windowId, url: url, pinned: true, active: false });
         });
-      });
+      } else {
+        // Startup restore (default window)
+        chrome.tabs.query({ pinned: true }, (currentPinnedTabs) => {
+          const currentUrls = currentPinnedTabs.map(t => t.url);
+
+          savedUrls.forEach(url => {
+            if (!currentUrls.includes(url)) {
+              chrome.tabs.create({ url: url, pinned: true, active: false });
+            }
+          });
+        });
+      }
     }
   });
 }
 
 // Event Listeners to trigger saving
-// 1. Tab updated (e.g. navigation, pin status change)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.pinned !== undefined || (tab.pinned && changeInfo.url)) {
     savePinnedTabs();
   }
 });
 
-// 2. Tab created (if created as pinned)
 chrome.tabs.onCreated.addListener((tab) => {
   if (tab.pinned) {
     savePinnedTabs();
   }
 });
 
-// 3. Tab removed (if it was pinned, we need to update list)
-// Since we don't know the state of the closed tab easily in onRemoved without keeping state,
-// we just re-query everything. In MV3 service workers, state is volatile, so re-query is safer.
 chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
   savePinnedTabs();
 });
 
-// 4. Tab detached/attached (moving between windows)
 chrome.tabs.onDetached.addListener(() => savePinnedTabs());
 chrome.tabs.onAttached.addListener(() => savePinnedTabs());
 
@@ -64,11 +65,20 @@ chrome.runtime.onStartup.addListener(() => {
   restorePinnedTabs();
 });
 
-// Also restore on installation for testing immediately
+// Restore on new window creation
+chrome.windows.onCreated.addListener((window) => {
+  console.log('Window created:', window);
+  // Only restore for normal windows
+  if (window.type === 'normal') {
+    // Use a small timeout to ensure the window is initialized?
+    // Sometimes onCreated fires before the window is fully ready to accept tabs in some OS/Chrome versions,
+    // but generally it's fine. Adding a small log and direct call.
+    restorePinnedTabs(window.id);
+  }
+});
+
+// Also restore on installation
 chrome.runtime.onInstalled.addListener(() => {
   console.log('Extension installed.');
-  // Optional: restore triggers on install too? 
-  // Maybe better not to force open tabs on install unless user wants it. 
-  // keeping it commented out or simple log.
-  savePinnedTabs(); // Initialize storage with current state
+  savePinnedTabs();
 });
