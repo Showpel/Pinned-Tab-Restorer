@@ -17,23 +17,23 @@ function restorePinnedTabs(windowId) {
   chrome.storage.local.get(['pinnedTabs'], (result) => {
     const savedUrls = result.pinnedTabs;
     if (savedUrls && savedUrls.length > 0) {
-      if (windowId) {
-        // Restore to specific window
-        savedUrls.forEach(url => {
-          chrome.tabs.create({ windowId: windowId, url: url, pinned: true, active: false });
-        });
-      } else {
-        // Startup restore (default window)
-        chrome.tabs.query({ pinned: true }, (currentPinnedTabs) => {
-          const currentUrls = currentPinnedTabs.map(t => t.url);
+      // Determine which window to check/restore to
+      const targetWindowId = windowId || chrome.windows.WINDOW_ID_CURRENT;
 
-          savedUrls.forEach(url => {
-            if (!currentUrls.includes(url)) {
-              chrome.tabs.create({ url: url, pinned: true, active: false });
-            }
-          });
+      // Query tabs in the target window to avoid duplicates
+      chrome.tabs.query({ windowId: targetWindowId, pinned: true }, (currentPinnedTabs) => {
+        const currentUrls = currentPinnedTabs.map(t => t.url);
+        // Also check unpinned tabs just in case? No, purely pinned.
+
+        savedUrls.forEach(url => {
+          // Avoid restoring if it's already there (exact match)
+          if (!currentUrls.includes(url)) {
+            chrome.tabs.create({ windowId: windowId, url: url, pinned: true, active: false });
+          } else {
+            console.log(`Skipping duplicate restore for: ${url}`);
+          }
         });
-      }
+      });
     }
   });
 }
@@ -61,8 +61,9 @@ chrome.tabs.onAttached.addListener(() => savePinnedTabs());
 
 // Restore on startup
 chrome.runtime.onStartup.addListener(() => {
-  console.log('Extension started, restoring tabs...');
-  restorePinnedTabs();
+  console.log('Extension started.');
+  // onCreated handles the initial window restore, so we skip it here to avoid duplication.
+  // restorePinnedTabs();
 });
 
 // Restore on new window creation
@@ -70,10 +71,13 @@ chrome.windows.onCreated.addListener((window) => {
   console.log('Window created:', window);
   // Only restore for normal windows
   if (window.type === 'normal') {
-    // Use a small timeout to ensure the window is initialized?
-    // Sometimes onCreated fires before the window is fully ready to accept tabs in some OS/Chrome versions,
-    // but generally it's fine. Adding a small log and direct call.
-    restorePinnedTabs(window.id);
+    // Startup Race Condition Logic:
+    // When Chrome starts (Cmd+Q -> Open), it might restore session tabs natively.
+    // If we run immediately, we see 0 tabs, add ours, then Chrome adds theirs -> Duplicates.
+    // We wait 1000ms to let Chrome finish its native restore.
+    setTimeout(() => {
+      restorePinnedTabs(window.id);
+    }, 1000);
   }
 });
 
