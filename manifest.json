@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Pinned Tabs Restorer",
+  "version": "1.0",
+  "description": "Automatically saves and restores your pinned tabs.",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
